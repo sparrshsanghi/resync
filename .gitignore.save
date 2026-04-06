@@ -1,0 +1,12 @@
+myenv/
+venv/
+.env
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.cache/
+*.bin
+*.pt
+*.model
+*.safetensors
