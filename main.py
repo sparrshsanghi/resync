@@ -1,49 +1,57 @@
-from sentence_transformers import SentenceTransformer
-import faiss
-import numpy as np
+from fastapi import FastAPI
 from groq import Groq
+import numpy as np
 import json
 import re
 import os
 
-# 1. Load embedding model
-model = SentenceTransformer('all-MiniLM-L6-v2')
+app = FastAPI()
 
-# 2. Sample transcripts (replace later with real data)
+# -------- Documents --------
 documents = [
     "In this video we explain arrays and time complexity with examples...",
     "This lecture covers binary trees, traversal techniques and recursion...",
     "Graph algorithms like BFS and DFS are essential for interviews...",
 ]
 
-# 3. Convert to embeddings
-doc_embeddings = model.encode(documents)
+# -------- Lazy Model Loader --------
+model = None
 
-# 4. Store in FAISS
-dimension = doc_embeddings.shape[1]
-index = faiss.IndexFlatL2(dimension)
-index.add(np.array(doc_embeddings))
+def get_model():
+    global model
+    if model is None:
+        from sentence_transformers import SentenceTransformer
+        model = SentenceTransformer('all-MiniLM-L6-v2')
+    return model
 
-# 5. Groq setup (put your API key)
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-
+# -------- Recommendation --------
 def recommend(goal):
-    # Convert query to embedding
+    model = get_model()
+
+    # Encode
+    doc_embeddings = model.encode(documents)
     query_embedding = model.encode([goal])
 
-    # Search top 3
-    distances, indices = index.search(np.array(query_embedding), k=3)
+    # Simple similarity (NO FAISS)
+    similarities = np.dot(doc_embeddings, query_embedding.T).flatten()
 
-    retrieved = [documents[i] for i in indices[0]]
+    # Top 3
+    top_indices = similarities.argsort()[-3:][::-1]
+    retrieved = [documents[i] for i in top_indices]
 
-    # Send to LLM
+    # Groq client (lazy)
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        return {"error": "API key missing"}
+
+    client = Groq(api_key=api_key)
+
+    # Prompt
     prompt = f"""
 User goal: {goal}
 
 Relevant learning content:
 {retrieved}
-
-You are an AI learning assistant.
 
 Return ONLY valid JSON:
 
@@ -61,12 +69,10 @@ Return ONLY valid JSON:
 
     output = response.choices[0].message.content
 
-    # clean markdown
     cleaned = re.sub(r"```json|```", "", output).strip()
 
     try:
-        parsed = json.loads(cleaned)
-        return parsed
+        return json.loads(cleaned)
     except:
         return {
             "recommended_topics": ["Basics"],
@@ -74,26 +80,11 @@ Return ONLY valid JSON:
             "roadmap": ["Start simple"]
         }
 
-
-# Run test
-if __name__ == "__main__":
-    goal = input("Enter your goal: ")
-    result = recommend(goal)
-    print("\nResult:\n", result)
-
-from fastapi import FastAPI
-
-app = FastAPI()
-
+# -------- API --------
 @app.post("/recommend")
 def recommend_api(data: dict):
     return recommend(data["goal"])
 
-
-import os
-
-port = int(os.environ.get("PORT", 8000))
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=port)
+@app.get("/")
+def home():
+    return {"message": "Resync AI running 🚀"}
