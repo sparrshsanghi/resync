@@ -75,6 +75,7 @@ Return ONLY valid JSON:
     response = client.chat.completions.create(
         model="llama-3.1-8b-instant",
         messages=[{"role": "user", "content": prompt}]
+        timeout=10
     )
 
     output = response.choices[0].message.content
@@ -106,7 +107,3 @@ def health():
 @app.get("/")
 def home():
     return {"message": "Resync AI running 🚀"}
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ["PORT"])
-    uvicorn.run("main:app", host="0.0.0.0", port=port)
