@@ -74,7 +74,7 @@ Return ONLY valid JSON:
 
     response = client.chat.completions.create(
         model="llama-3.1-8b-instant",
-        messages=[{"role": "user", "content": prompt}]
+        messages=[{"role": "user", "content": prompt}],
         timeout=10
     )
 
