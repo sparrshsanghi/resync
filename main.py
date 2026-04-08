@@ -96,9 +96,6 @@ Return ONLY valid JSON:
 def recommend_api(data: dict):
     return recommend(data["goal"])
 
-@app.on_event("startup")
-def load_model():
-    get_model()
 
 @app.get("/health")
 def health():
