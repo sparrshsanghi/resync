@@ -1,5 +1,4 @@
 from fastapi import FastAPI
-from groq import Groq
 import numpy as np
 import json
 import re
@@ -16,6 +15,7 @@ documents = [
 
 # -------- Lazy Model Loader --------
 model = None
+doc_embeddings = None
 
 def get_model():
     global model
@@ -24,12 +24,22 @@ def get_model():
         model = SentenceTransformer('all-MiniLM-L6-v2')
     return model
 
+def get_embeddings():
+        global doc_embeddings
+        if doc_embeddings is None:
+            model = get_model()
+            doc_embeddings = model.encode(documents)
+        return doc_embeddings
+    
+
 # -------- Recommendation --------
 def recommend(goal):
+    from groq import Groq
     model = get_model()
 
     # Encode
-    doc_embeddings = model.encode(documents)
+
+    doc_embeddings = get_embeddings()
     query_embedding = model.encode([goal])
 
     # Simple similarity (NO FAISS)
@@ -85,6 +95,10 @@ Return ONLY valid JSON:
 def recommend_api(data: dict):
     return recommend(data["goal"])
 
+@app.on_event("startup")
+def load_model():
+    get_model()
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -94,5 +108,5 @@ def home():
     return {"message": "Resync AI running 🚀"}
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 10000))
+    port = int(os.environ["PORT"])
     uvicorn.run("main:app", host="0.0.0.0", port=port)
