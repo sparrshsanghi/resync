@@ -17,6 +17,12 @@ documents = [
 model = None
 doc_embeddings = None
 
+def preload_embeddings():
+    global doc_embeddings
+    if doc_embeddings is None:
+        model = get_model()
+        doc_embeddings = model.encode(documents)
+
 def get_model():
     global model
     if model is None:
@@ -35,6 +41,7 @@ def get_embeddings():
 # -------- Recommendation --------
 def recommend(goal):
     from groq import Groq
+    preload_embeddings()
     model = get_model()
 
     # Encode
@@ -52,7 +59,11 @@ def recommend(goal):
     # Groq client (lazy)
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        return {"error": "API key missing"}
+        return {
+            "recommended_topics": retrieved,
+            "reason": ["No API key, using semantic similarity"],
+            "roadmap": ["Start basics", "Practice", "Advance"]
+        }
 
     client = Groq(api_key=api_key)
 
@@ -72,23 +83,26 @@ Return ONLY valid JSON:
 }}
 """
 
-    response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
-        messages=[{"role": "user", "content": prompt}],
-        timeout=10
-    )
-
-    output = response.choices[0].message.content
-
-    cleaned = re.sub(r"```json|```", "", output).strip()
-
     try:
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[{"role": "user", "content": prompt}],
+            timeout=5
+        )
+
+        output = response.choices[0].message.content
+        cleaned = re.sub(r"```json|```", "", output).strip()
+
         return json.loads(cleaned)
-    except:
+
+    except Exception as e:
+        print("Groq failed:", str(e))
+
+
         return {
-            "recommended_topics": ["Basics"],
-            "reason": ["Fallback"],
-            "roadmap": ["Start simple"]
+            "recommended_topics": retrieved,
+            "reason": ["Generated using semantic similarity"],
+            "roadmap": ["Start with basics", "Practice", "Advance"]
         }
 
 # -------- API --------
