@@ -130,9 +130,9 @@ def extract_transcript(video_id: str, max_chars: int = MAX_TRANSCRIPT_CHARS) -> 
 
         except Exception as e:
             if languages:
-                logger.debug(f"English transcript not available for {video_id}: {e}")
+                logger.warning(f"English transcript not available for {video_id}: {type(e).__name__}: {e}")
                 continue
-            logger.debug(f"Transcript extraction failed for {video_id}: {e}")
+            logger.warning(f"Transcript extraction failed for {video_id}: {type(e).__name__}: {e}")
             return None
 
     return None
