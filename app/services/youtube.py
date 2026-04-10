@@ -114,9 +114,10 @@ def extract_transcript(video_id: str, max_chars: int = MAX_TRANSCRIPT_CHARS) -> 
             else:
                 # Fetch whatever is available — list transcripts and pick the first
                 transcript_list = ytt.list(video_id)
-                if not transcript_list:
+                first_transcript = next(iter(transcript_list), None)
+                if first_transcript is None:
                     return None
-                first_lang = transcript_list[0].language_code
+                first_lang = first_transcript.language_code
                 transcript = ytt.fetch(video_id, languages=[first_lang])
 
             full_text = " ".join(snippet.text for snippet in transcript)
