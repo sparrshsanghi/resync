@@ -25,6 +25,10 @@ MAX_VIDEOS_TO_RETURN = 5      # final recommendations
 MAX_TRANSCRIPT_CHARS = 2000   # per video transcript limit
 NUM_SEARCH_QUERIES = 3        # LLM-generated search queries
 
+# Set to "true" to skip transcript fetching (useful for cloud deployments
+# where YouTube blocks transcript requests from cloud-provider IPs).
+SKIP_TRANSCRIPTS = os.getenv("SKIP_TRANSCRIPTS", "false").lower() in ("true", "1", "yes")
+
 # ─── Embedding Settings ──────────────────────────────────────
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 

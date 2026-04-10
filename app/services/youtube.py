@@ -10,9 +10,12 @@ import concurrent.futures
 import yt_dlp
 from youtube_transcript_api import YouTubeTranscriptApi
 
-from app.config import MAX_SEARCH_RESULTS_PER_QUERY, MAX_TRANSCRIPT_CHARS, MAX_VIDEOS_TO_PROCESS
+from app.config import MAX_SEARCH_RESULTS_PER_QUERY, MAX_TRANSCRIPT_CHARS, MAX_VIDEOS_TO_PROCESS, SKIP_TRANSCRIPTS
 
 logger = logging.getLogger(__name__)
+
+# Track whether transcripts are being IP-blocked so we can fast-fail
+_transcript_blocked = False
 
 
 def _format_duration(seconds) -> str:
@@ -103,7 +106,17 @@ def extract_transcript(video_id: str, max_chars: int = MAX_TRANSCRIPT_CHARS) -> 
     Fetch auto-generated or manual transcript from a YouTube video.
     Uses youtube-transcript-api v1.x API.
     Returns concatenated transcript text, truncated to max_chars.
+    Returns None immediately if transcripts are disabled or IP-blocked.
     """
+    global _transcript_blocked
+
+    # Fast-fail if we already know transcripts are blocked or disabled
+    if SKIP_TRANSCRIPTS:
+        return None
+    if _transcript_blocked:
+        logger.debug(f"Skipping transcript for {video_id} (IP blocked)")
+        return None
+
     ytt = YouTubeTranscriptApi()
 
     # Try English first, then fall back to any available language
@@ -129,10 +142,24 @@ def extract_transcript(video_id: str, max_chars: int = MAX_TRANSCRIPT_CHARS) -> 
             return full_text
 
         except Exception as e:
+            error_name = type(e).__name__
+
+            # Detect IP blocking and enable fast-fail for remaining videos
+            if error_name == "RequestBlocked":
+                if not _transcript_blocked:
+                    logger.warning(
+                        f"YouTube is blocking transcript requests from this IP. "
+                        f"Disabling transcript fetching for remaining videos. "
+                        f"Set SKIP_TRANSCRIPTS=true to suppress this warning. "
+                        f"Videos will still be recommended using title + description."
+                    )
+                    _transcript_blocked = True
+                return None
+
             if languages:
-                logger.warning(f"English transcript not available for {video_id}: {type(e).__name__}: {e}")
+                logger.debug(f"English transcript not available for {video_id}: {error_name}")
                 continue
-            logger.warning(f"Transcript extraction failed for {video_id}: {type(e).__name__}: {e}")
+            logger.debug(f"Transcript extraction failed for {video_id}: {error_name}")
             return None
 
     return None
@@ -159,22 +186,33 @@ def search_and_extract(queries: list[str], max_per_query: int = MAX_SEARCH_RESUL
         if len(all_videos) >= max_total:
             break
 
-    # 2. Fetch transcripts concurrently
+    # 2. Fetch transcripts concurrently (skipped if SKIP_TRANSCRIPTS or IP-blocked)
     def fetch_and_attach(video):
         transcript = extract_transcript(video["video_id"])
         video["transcript"] = transcript
         video["has_transcript"] = transcript is not None
         return video
 
-    enriched_videos = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(max_total, 5)) as executor:
-        futures = [executor.submit(fetch_and_attach, video) for video in all_videos]
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                enriched_videos.append(future.result())
-            except Exception as e:
-                logger.error(f"Transcript fetch error: {e}")
+    if SKIP_TRANSCRIPTS:
+        logger.info("Transcript fetching disabled (SKIP_TRANSCRIPTS=true). Ranking by title + description only.")
+        for video in all_videos:
+            video["transcript"] = None
+            video["has_transcript"] = False
+        enriched_videos = all_videos
+    else:
+        enriched_videos = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(max_total, 5)) as executor:
+            futures = [executor.submit(fetch_and_attach, video) for video in all_videos]
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    enriched_videos.append(future.result())
+                except Exception as e:
+                    logger.error(f"Transcript fetch error: {e}")
 
-    logger.info(f"Total unique videos processed: {len(enriched_videos)}, "
-                f"with transcripts: {sum(1 for v in enriched_videos if v['has_transcript'])}")
+    transcript_count = sum(1 for v in enriched_videos if v['has_transcript'])
+    logger.info(f"Total unique videos processed: {len(enriched_videos)}, with transcripts: {transcript_count}")
+
+    if transcript_count == 0 and not SKIP_TRANSCRIPTS and not _transcript_blocked:
+        logger.info("No transcripts available — videos will be ranked using title + description.")
+
     return enriched_videos
