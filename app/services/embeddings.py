@@ -1,104 +1,168 @@
 """
-Resync AI Backend — Embedding & Ranking Service
-Uses sentence-transformers for semantic similarity ranking of videos.
+Resync AI Backend — Video Ranking Service
+Uses Groq LLM for semantic relevance ranking of videos.
+
+Replaces the previous sentence-transformers approach which required ~2GB RAM
+to load locally — infeasible on Render's free tier (512MB).
 """
 
+import json
+import re
 import logging
-import numpy as np
-from typing import Optional
-
-from app.config import EMBEDDING_MODEL_NAME
+from app.config import GROQ_API_KEY, PRIMARY_MODEL, FALLBACK_MODEL, LLM_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
-# ─── Lazy-loaded globals ──────────────────────────────────────
-_model = None
-_model_loading = False
+
+def _call_groq_ranking(prompt: str) -> str | None:
+    """Call Groq LLM for ranking. Separate from main._call_groq to avoid circular imports."""
+    if not GROQ_API_KEY:
+        logger.warning("GROQ_API_KEY not set — skipping LLM ranking")
+        return None
+
+    from groq import Groq
+    client = Groq(api_key=GROQ_API_KEY)
+
+    for model_name in [PRIMARY_MODEL, FALLBACK_MODEL]:
+        try:
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,  # low temperature for consistent ranking
+                max_tokens=1024,
+                timeout=LLM_TIMEOUT,
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.warning(f"Groq ranking with {model_name} failed: {e}")
+            continue
+
+    return None
 
 
-def get_model():
-    """Lazy-load the sentence transformer model."""
-    global _model
-    if _model is None:
-        logger.info(f"Loading embedding model: {EMBEDDING_MODEL_NAME}...")
-        from sentence_transformers import SentenceTransformer
-        _model = SentenceTransformer(EMBEDDING_MODEL_NAME)
-        logger.info("Embedding model loaded successfully.")
-    return _model
-
-
-def encode_texts(texts: list[str]) -> np.ndarray:
-    """Encode a list of texts into embedding vectors."""
-    model = get_model()
-    return model.encode(texts, show_progress_bar=False)
-
-
-def compute_similarity(query_embedding: np.ndarray, doc_embeddings: np.ndarray) -> np.ndarray:
-    """Compute cosine similarity between query and document embeddings."""
-    # Normalize
-    query_norm = query_embedding / (np.linalg.norm(query_embedding, axis=-1, keepdims=True) + 1e-10)
-    doc_norm = doc_embeddings / (np.linalg.norm(doc_embeddings, axis=-1, keepdims=True) + 1e-10)
-
-    # Cosine similarity
-    if query_norm.ndim == 1:
-        query_norm = query_norm.reshape(1, -1)
-
-    similarities = np.dot(doc_norm, query_norm.T).flatten()
-    return similarities
+def _parse_ranking(raw: str | None) -> list[int] | None:
+    """Extract a list of indices from LLM ranking output."""
+    if not raw:
+        return None
+    try:
+        cleaned = re.sub(r"```json|```", "", raw).strip()
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, dict) and "ranking" in parsed:
+            return parsed["ranking"]
+        if isinstance(parsed, list):
+            return parsed
+    except json.JSONDecodeError:
+        # Try to extract numbers from the output
+        numbers = re.findall(r'\d+', raw)
+        if numbers:
+            return [int(n) for n in numbers]
+    return None
 
 
 def rank_videos(goal: str, videos: list[dict], top_n: int = 5) -> list[dict]:
     """
-    Rank videos by semantic similarity to the user's goal.
-    Uses title + transcript (if available) to create document representations.
+    Rank videos by relevance to the user's learning goal.
+
+    Uses Groq LLM to judge which videos are most relevant based on
+    title + description + transcript snippet. Falls back to simple
+    keyword matching if LLM is unavailable.
+
     Returns the top_n most relevant videos, sorted by relevance score.
     """
     if not videos:
         return []
 
-    # Build document representations
-    doc_texts = []
-    for v in videos:
-        # Combine title + channel + description + transcript snippet for richer representation
-        parts = [v.get("title", "")]
+    if len(videos) <= top_n:
+        # No ranking needed — just score them all equally
+        for i, v in enumerate(videos):
+            v["relevance_score"] = 1.0 - (i * 0.01)
+        return videos
 
+    # Build video summaries for ranking
+    video_list = []
+    for i, v in enumerate(videos):
+        parts = [v.get("title", "")]
         desc = v.get("description", "")
         if desc:
-            parts.append(desc)
-
+            parts.append(desc[:150])
         transcript = v.get("transcript", "")
         if transcript:
-            # Use first 500 chars of transcript for embedding
-            parts.append(transcript[:500])
+            parts.append(transcript[:200])
+        video_list.append(f"[{i}] {' | '.join(parts)}")
 
-        doc_texts.append(" | ".join(parts))
+    videos_text = "\n".join(video_list)
 
-    # Encode everything
-    query_embedding = encode_texts([goal])[0]
-    doc_embeddings = encode_texts(doc_texts)
+    prompt = f"""You are ranking YouTube videos by relevance to a learning goal.
 
-    # Compute similarities
-    scores = compute_similarity(query_embedding, doc_embeddings)
+Learning goal: "{goal}"
 
-    # Add scores to videos
-    scored_videos = []
-    for i, video in enumerate(videos):
-        video_copy = video.copy()
-        video_copy["relevance_score"] = float(scores[i])
-        scored_videos.append(video_copy)
+Videos:
+{videos_text}
 
-    # Sort by score descending
-    scored_videos.sort(key=lambda x: x["relevance_score"], reverse=True)
+Rank the top {top_n} most relevant videos for learning this topic.
+Return ONLY valid JSON: {{"ranking": [indices in order of relevance]}}
+
+Example: {{"ranking": [2, 0, 5, 1, 3]}}"""
+
+    ranking = _parse_ranking(_call_groq_ranking(prompt))
+
+    if ranking:
+        # Use LLM ranking
+        result = []
+        seen = set()
+        for rank, idx in enumerate(ranking):
+            if idx < len(videos) and idx not in seen:
+                seen.add(idx)
+                video_copy = videos[idx].copy()
+                video_copy["relevance_score"] = 1.0 - (rank * 0.1)
+                result.append(video_copy)
+                if len(result) >= top_n:
+                    break
+
+        # If LLM didn't return enough, pad with remaining videos
+        if len(result) < top_n:
+            for i, v in enumerate(videos):
+                if i not in seen:
+                    video_copy = v.copy()
+                    video_copy["relevance_score"] = 0.3
+                    result.append(video_copy)
+                    if len(result) >= top_n:
+                        break
+
+        logger.info(f"Ranked {len(videos)} videos → top {len(result)} by LLM relevance to '{goal}'")
+        return result
+    else:
+        # Fallback: simple keyword overlap scoring
+        logger.info("LLM ranking unavailable — falling back to keyword matching")
+        return _keyword_rank(goal, videos, top_n)
+
+
+def _keyword_rank(goal: str, videos: list[dict], top_n: int) -> list[dict]:
+    """Fallback ranking using simple keyword overlap."""
+    goal_words = set(goal.lower().split())
+
+    scored = []
+    for v in videos:
+        text = f"{v.get('title', '')} {v.get('description', '')}".lower()
+        text_words = set(text.split())
+        overlap = len(goal_words & text_words)
+        score = overlap / max(len(goal_words), 1)
+
+        video_copy = v.copy()
+        video_copy["relevance_score"] = round(score, 3)
+        scored.append(video_copy)
+
+    scored.sort(key=lambda x: x["relevance_score"], reverse=True)
 
     # Deduplicate by channel — keep at most 2 videos per channel
     channel_count = {}
     deduplicated = []
-    for v in scored_videos:
+    for v in scored:
         ch = v.get("channel", "Unknown")
         channel_count[ch] = channel_count.get(ch, 0) + 1
         if channel_count[ch] <= 2:
             deduplicated.append(v)
 
     result = deduplicated[:top_n]
-    logger.info(f"Ranked {len(videos)} videos → top {len(result)} by relevance to '{goal}'")
+    logger.info(f"Keyword-ranked {len(videos)} videos → top {len(result)} for '{goal}'")
     return result

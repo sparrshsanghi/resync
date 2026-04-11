@@ -29,9 +29,6 @@ NUM_SEARCH_QUERIES = 3        # LLM-generated search queries
 # where YouTube blocks transcript requests from cloud-provider IPs).
 SKIP_TRANSCRIPTS = os.getenv("SKIP_TRANSCRIPTS", "false").lower() in ("true", "1", "yes")
 
-# ─── Embedding Settings ──────────────────────────────────────
-EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
-
 # ─── CORS Settings ───────────────────────────────────────────
 ALLOWED_ORIGINS = [
     "http://localhost:5173",
