@@ -41,9 +41,21 @@ class RoadmapStep(BaseModel):
     step_number: int
     title: str
     description: str
-    difficulty: str = "beginner"
+    difficulty: str = "beginner"  # beginner / intermediate / advanced
+    estimated_time: str = ""     # e.g. "2-3 hours"
     concepts: list[str] = Field(default_factory=list)
     video_urls: list[str] = Field(default_factory=list)
+    resources: list[str] = Field(default_factory=list)       # docs, articles, exercises
+    prerequisites: list[str] = Field(default_factory=list)   # titles of required prior steps
+
+
+class RoadmapProgressResponse(BaseModel):
+    """Detailed progress summary for a session's roadmap"""
+    progress: str = "0%"             # human-readable, e.g. "60%"
+    completed: int = 0
+    total: int = 0
+    remaining: int = 0
+    completed_steps: list[str] = Field(default_factory=list)
 
 
 class RecommendResponse(BaseModel):

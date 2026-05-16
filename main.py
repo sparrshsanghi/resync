@@ -24,6 +24,7 @@ from app.config import (
 from app.models import RecommendRequest, RecommendResponse, NextStepRequest, NextStepResponse
 from app.services.embeddings import rank_videos
 from app.services.youtube import search_and_extract
+from app.services.roadmap import generate_roadmap
 from app.services.memory import (
     create_session,
     get_session,
@@ -33,6 +34,7 @@ from app.services.memory import (
     get_previously_recommended_urls,
     get_progress,
 )
+from app.routes.roadmap import router as roadmap_router
 
 # ─── Logging ──────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s │ %(name)s │ %(levelname)s │ %(message)s")
@@ -53,6 +55,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ─── Routers ──────────────────────────────────────────────────
+app.include_router(roadmap_router)
 
 
 # ─── Groq Helper ─────────────────────────────────────────────
@@ -111,42 +116,7 @@ Return ONLY valid JSON:
     return [goal, f"{goal} tutorial", f"{goal} explained"]
 
 
-def _generate_roadmap(goal: str, videos: list[dict]) -> list[dict]:
-    """Use LLM to generate a learning roadmap based on discovered content."""
-    video_summaries = []
-    for v in videos[:5]:
-        video_summaries.append(f"- {v.get('title', '')} ({v.get('url', '')})")
-    videos_text = "\n".join(video_summaries)
-
-    prompt = f"""Create a step-by-step learning roadmap for: "{goal}"
-
-Available video resources:
-{videos_text}
-
-Return ONLY valid JSON:
-{{
-  "roadmap": [
-    {{
-      "step_number": 1,
-      "title": "Step title",
-      "description": "What to learn and why",
-      "difficulty": "beginner",
-      "concepts": ["concept1", "concept2"],
-      "video_urls": ["url1"]
-    }}
-  ]
-}}"""
-
-    parsed = _parse_json(_call_groq(prompt))
-    if parsed and "roadmap" in parsed:
-        return parsed["roadmap"]
-
-    # Fallback roadmap
-    return [
-        {"step_number": 1, "title": "Learn the fundamentals", "description": f"Start with the basics of {goal}", "difficulty": "beginner", "concepts": [], "video_urls": []},
-        {"step_number": 2, "title": "Practice with examples", "description": "Apply what you've learned with hands-on exercises", "difficulty": "intermediate", "concepts": [], "video_urls": []},
-        {"step_number": 3, "title": "Build projects", "description": "Solidify your understanding by building something real", "difficulty": "advanced", "concepts": [], "video_urls": []},
-    ]
+# _generate_roadmap has been moved to app/services/roadmap.py — use generate_roadmap() directly.
 
 
 # ─── API Routes ───────────────────────────────────────────────
@@ -178,7 +148,7 @@ def recommend_api(data: RecommendRequest):
     ranked = rank_videos(goal, fresh_videos, top_n=top_n)
 
     # 6. Generate roadmap
-    roadmap = _generate_roadmap(goal, ranked)
+    roadmap = generate_roadmap(goal, ranked)
 
     # 7. Store in session
     add_recommended_videos(session_id, ranked)
