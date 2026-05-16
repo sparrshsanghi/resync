@@ -120,6 +120,22 @@ Difficulty must be one of: beginner, intermediate, advanced."""
             step.setdefault("concepts", [])
             step.setdefault("video_urls", [])
             step.setdefault("difficulty", "beginner")
+            
+            # Convert numeric prerequisites (step numbers) to step titles
+            prerequisites = step.get("prerequisites", [])
+            converted_prereqs = []
+            for prereq in prerequisites:
+                if isinstance(prereq, int):
+                    # Find step by step_number
+                    for s in steps:
+                        if s.get("step_number") == prereq:
+                            converted_prereqs.append(s.get("title", ""))
+                            break
+                else:
+                    # Already a string (step title)
+                    converted_prereqs.append(str(prereq))
+            step["prerequisites"] = converted_prereqs
+        
         logger.info(f"Generated {len(steps)}-step roadmap for '{goal}'")
         return steps
 
