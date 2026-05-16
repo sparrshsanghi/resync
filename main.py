@@ -35,6 +35,7 @@ from app.services.memory import (
     get_progress,
 )
 from app.routes.roadmap import router as roadmap_router
+from app.routes.weakness import router as weakness_router
 
 # ─── Logging ──────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s │ %(name)s │ %(levelname)s │ %(message)s")
@@ -58,6 +59,7 @@ app.add_middleware(
 
 # ─── Routers ──────────────────────────────────────────────────
 app.include_router(roadmap_router)
+app.include_router(weakness_router)
 
 
 # ─── Groq Helper ─────────────────────────────────────────────

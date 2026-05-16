@@ -6,7 +6,7 @@ In-memory user session store for context-aware recommendations.
 import uuid
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,7 @@ def create_session(goal: str, user_id: Optional[str] = None) -> str:
             "recommended_video_urls": set(),
             "roadmap": [],
             "completed_steps": [],
+            "unsolved_questions": [],
             "interaction_count": 1,
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
@@ -113,3 +114,75 @@ def get_progress(session_id: str) -> dict:
         "total": total,
         "remaining": remaining,
     }
+
+
+# ─── Weakness / Unsolved Question Helpers ─────────────────────
+
+WeaknessStatus = Literal["unsolved", "reviewed", "resolved"]
+
+
+def add_unsolved_question(session_id: str, question_data: dict) -> Optional[dict]:
+    """
+    Add a weakness / unsolved-question item to the session.
+
+    Expected keys in question_data:
+        question (str)  — required
+        notes    (str)  — optional, default ""
+        tags     (list) — optional, default []
+
+    Returns the stored item (with auto-generated id, status, attempted_at),
+    or None if the session does not exist.
+    """
+    session = _sessions.get(session_id)
+    if session is None:
+        return None
+
+    item: dict = {
+        "id": str(uuid.uuid4()),
+        "question": question_data.get("question", ""),
+        "notes": question_data.get("notes", ""),
+        "weakness_tags": question_data.get("tags", []),
+        "attempted_at": datetime.now().isoformat(),
+        "status": "unsolved",
+    }
+
+    session.setdefault("unsolved_questions", []).append(item)
+    session["updated_at"] = datetime.now().isoformat()
+    logger.info(f"Session {session_id}: added unsolved question id={item['id']}")
+    return item
+
+
+def get_unsolved_questions(session_id: str) -> list[dict]:
+    """Return all weakness/unsolved-question items for a session."""
+    session = _sessions.get(session_id)
+    if session is None:
+        return []
+    return session.get("unsolved_questions", [])
+
+
+def resolve_unsolved_question(
+    session_id: str,
+    question_id: str,
+    new_status: WeaknessStatus = "resolved",
+) -> Optional[dict]:
+    """
+    Update the status of a weakness item.
+
+    new_status must be one of: 'unsolved', 'reviewed', 'resolved'
+
+    Returns the updated item, or None if the session/item is not found.
+    """
+    session = _sessions.get(session_id)
+    if session is None:
+        return None
+
+    for item in session.get("unsolved_questions", []):
+        if item["id"] == question_id:
+            item["status"] = new_status
+            session["updated_at"] = datetime.now().isoformat()
+            logger.info(
+                f"Session {session_id}: question {question_id} → status='{new_status}'"
+            )
+            return item
+
+    return None

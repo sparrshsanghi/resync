@@ -72,3 +72,38 @@ class NextStepResponse(BaseModel):
     next_step: Optional[RoadmapStep] = None
     progress: str = "0%"
     remaining_steps: int = 0
+
+
+# ─── Weakness / Unsolved Question Models ──────────────────────
+
+class AddUnsolvedRequest(BaseModel):
+    """Request body for POST /weakness/{session_id}/unsolved"""
+    question: str = Field(..., min_length=3, max_length=1000, description="The unsolved question or weak concept")
+    notes: str = Field("", max_length=2000, description="Optional personal notes or context")
+    tags: list[str] = Field(default_factory=list, description="Topic/weakness tags, e.g. ['recursion', 'dynamic programming']")
+
+
+class ResolveWeaknessRequest(BaseModel):
+    """Request body for POST /weakness/{session_id}/resolve"""
+    question_id: str = Field(..., description="ID of the weakness item to update")
+    status: str = Field("resolved", description="New status: 'unsolved' | 'reviewed' | 'resolved'")
+
+
+class WeaknessItem(BaseModel):
+    """A single weakness / unsolved-question item"""
+    id: str
+    question: str
+    notes: str = ""
+    weakness_tags: list[str] = Field(default_factory=list)
+    attempted_at: str = ""
+    status: str = "unsolved"   # unsolved | reviewed | resolved
+
+
+class WeaknessListResponse(BaseModel):
+    """Response from GET /weakness/{session_id}"""
+    session_id: str
+    total: int = 0
+    unsolved: int = 0
+    reviewed: int = 0
+    resolved: int = 0
+    items: list[WeaknessItem] = Field(default_factory=list)
